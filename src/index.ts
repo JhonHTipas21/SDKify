@@ -2,7 +2,7 @@ import * as path from "path";
 import { SwaggerSpecValidator } from "./validators/swagger.validator.js";
 import { HeyAPIGenerator } from "./generators/heyapi.generator.js";
 import { NpmPackager } from "./packager/npm.packager.js";
-import { GroqEnricher } from "./enrichers/groq.enricher.js";
+import { LLMEnricher } from "./enrichers/llm.enricher.js";
 import { ASTPostprocessor } from "./postprocessor/ast.postprocessor.js";
 import { TestGenerator } from "./generators/test.generator.js";
 
@@ -10,7 +10,9 @@ export interface PipelineOptions {
   specPath: string;
   outputDir: string;
   useAI?: boolean;
-  groqApiKey?: string;
+  llmProvider?: string;
+  groqApiKey?: string; // Deprecated, use apiKey
+  apiKey?: string;
   modelName?: string;
 }
 
@@ -43,8 +45,9 @@ export class SDKifyPipeline {
     const useAI = options.useAI !== false;
     if (useAI) {
       console.log(`[SDKify] Running AI Enrichment Layer...`);
-      const enricher = new GroqEnricher({
-        apiKey: options.groqApiKey,
+      const enricher = new LLMEnricher({
+        providerName: options.llmProvider,
+        apiKey: options.apiKey || options.groqApiKey,
         modelName: options.modelName,
       });
       const postprocessor = new ASTPostprocessor(enricher);
