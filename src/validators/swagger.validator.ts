@@ -1,5 +1,6 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import { SpecValidator } from "../interfaces/validator.interface.js";
+import { SpecValidationError } from "../errors/spec-validation.error.js";
 
 export class SwaggerSpecValidator implements SpecValidator {
   /**
@@ -13,7 +14,7 @@ export class SwaggerSpecValidator implements SpecValidator {
       const resolvedSpec = await SwaggerParser.validate(specPath);
       return resolvedSpec;
     } catch (error: any) {
-      throw new Error(`OpenAPI specification validation failed: ${error.message}`);
+      throw new SpecValidationError(`OpenAPI specification validation failed: ${error.message}`);
     }
   }
 }
