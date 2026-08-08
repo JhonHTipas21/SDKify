@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Test output directories
+tests/output/
+tests/output-scratch/
+
+# Environmental variables & cache
+.env
+.sdkify-cache.json
+.sdkify/
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
