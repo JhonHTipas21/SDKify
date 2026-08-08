@@ -5,6 +5,7 @@ import { NpmPackager } from "./packager/npm.packager.js";
 import { LLMEnricher } from "./enrichers/llm.enricher.js";
 import { ASTPostprocessor } from "./postprocessor/ast.postprocessor.js";
 import { TestGenerator } from "./generators/test.generator.js";
+import { PrettierFormatter } from "./formatter/prettier.formatter.js";
 
 export interface PipelineOptions {
   specPath: string;
@@ -68,6 +69,9 @@ export class SDKifyPipeline {
       version,
       description,
     });
+
+    // 4. Format Output Code
+    PrettierFormatter.format(options.outputDir);
 
     console.log(`[SDKify] Pipeline completed successfully! Generated SDK root: ${options.outputDir}`);
   }
