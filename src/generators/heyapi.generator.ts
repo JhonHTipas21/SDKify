@@ -1,5 +1,6 @@
 import { createClient } from "@hey-api/openapi-ts";
 import { BaseGenerator, GeneratedCode } from "../interfaces/generator.interface.js";
+import { GenerationError } from "../errors/generation.error.js";
 
 export class HeyAPIGenerator implements BaseGenerator {
   /**
@@ -15,7 +16,7 @@ export class HeyAPIGenerator implements BaseGenerator {
       });
       return { outputDir };
     } catch (error: any) {
-      throw new Error(`HeyAPI code generation failed: ${error.stack || error.message}`);
+      throw new GenerationError(`HeyAPI code generation failed: ${error.stack || error.message}`);
     }
   }
 }
