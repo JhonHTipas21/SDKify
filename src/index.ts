@@ -4,6 +4,7 @@ import { HeyAPIGenerator } from "./generators/heyapi.generator.js";
 import { NpmPackager } from "./packager/npm.packager.js";
 import { GroqEnricher } from "./enrichers/groq.enricher.js";
 import { ASTPostprocessor } from "./postprocessor/ast.postprocessor.js";
+import { TestGenerator } from "./generators/test.generator.js";
 
 export interface PipelineOptions {
   specPath: string;
@@ -51,6 +52,11 @@ export class SDKifyPipeline {
     } else {
       console.log(`[SDKify] AI Enrichment Layer disabled.`);
     }
+
+    // 2.7 Generate Smoke Tests
+    console.log(`[SDKify] Generating automated smoke tests...`);
+    const testGenerator = new TestGenerator();
+    await testGenerator.generate(options.outputDir);
 
     // 3. Package npm codebase (package.json, tsconfig.json, index.ts, etc.)
     console.log(`[SDKify] [3/3] Packaging npm module structure in: ${options.outputDir}...`);

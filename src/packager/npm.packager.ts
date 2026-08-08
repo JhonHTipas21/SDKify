@@ -28,16 +28,20 @@ export class NpmPackager {
       type: "module",
       scripts: {
         build: "tsc",
+        test: "vitest run",
       },
       dependencies: {
         "@hey-api/client-fetch": "^0.2.0",
       },
       devDependencies: {
         "typescript": "^5.4.5",
+        "vitest": "^1.6.0",
+        "msw": "^2.3.0",
       },
       files: [
         "dist",
         "src",
+        "tests",
       ],
     };
 
