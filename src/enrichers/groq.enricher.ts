@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import Groq from "groq-sdk";
 import { AIEnricher, EnrichmentResult } from "../interfaces/enricher.interface.js";
+import { EnrichmentError } from "../errors/enrichment.error.js";
 
 export interface GroqEnricherOptions {
   apiKey?: string;
@@ -107,7 +108,12 @@ export class GroqEnricher implements AIEnricher {
       });
 
       const rawResponse = chatCompletion.choices[0]?.message?.content || "{}";
-      const parsed = JSON.parse(rawResponse);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawResponse);
+      } catch (jsonErr: any) {
+        throw new EnrichmentError(`Invalid JSON response from LLM: ${jsonErr.message}`);
+      }
 
       const result: EnrichmentResult = {
         methodName: parsed.methodName || operationDetails.operationId || undefined,
