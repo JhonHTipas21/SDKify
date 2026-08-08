@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Project, SyntaxKind, ArrowFunction, CallExpression, ObjectLiteralExpression } from "ts-morph";
+import { TestGenerationError } from "../errors/test-generation.error.js";
 
 export interface TestGeneratorOptions {
   sdkRootDir: string;
@@ -16,8 +17,7 @@ export class TestGenerator {
     const servicesFilePath = path.join(srcDir, "services.gen.ts");
 
     if (!fs.existsSync(servicesFilePath)) {
-      console.warn(`[SDKify] Warning: Cannot generate tests. services.gen.ts not found.`);
-      return;
+      throw new TestGenerationError(`Cannot generate tests: services.gen.ts not found at ${servicesFilePath}`);
     }
 
     const project = new Project();
@@ -80,8 +80,12 @@ export class TestGenerator {
 
     // Build the test file content
     const testFileContent = this.buildTestFileContent(endpoints);
-    fs.writeFileSync(path.join(testsOutDir, "smoke.test.ts"), testFileContent, "utf-8");
-    console.log(`[SDKify] Smoke tests generated successfully at: ${path.join(testsOutDir, "smoke.test.ts")}`);
+    try {
+      fs.writeFileSync(path.join(testsOutDir, "smoke.test.ts"), testFileContent, "utf-8");
+      console.log(`[SDKify] Smoke tests generated successfully at: ${path.join(testsOutDir, "smoke.test.ts")}`);
+    } catch (writeErr: any) {
+      throw new TestGenerationError(`Failed to write smoke tests file: ${writeErr.message}`);
+    }
   }
 
   /**
