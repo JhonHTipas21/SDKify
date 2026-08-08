@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import * as dotenv from "dotenv";
 import { SDKifyPipeline } from "../index.js";
+import { ConfigReader } from "../config/config.reader.js";
 
 // Load environment variables from .env if present
 dotenv.config();
@@ -12,29 +13,42 @@ program
   .name("sdkify")
   .description("SDKify — Generate typed, AI-enriched TypeScript SDKs from OpenAPI specifications.")
   .version("1.0.0")
-  .requiredOption("-s, --spec <path>", "Path to the OpenAPI specification file (YAML or JSON)")
-  .requiredOption("-o, --output <dir>", "Output directory where the SDK package will be generated")
+  .option("-s, --spec <path>", "Path to the OpenAPI specification file (YAML or JSON)")
+  .option("-o, --output <dir>", "Output directory where the SDK package will be generated")
+  .option("-c, --config <path>", "Path to the SDKify configuration file")
   .option("--no-ai", "Disable the AI enrichment layer (deterministic generation only)")
-  .option("--model <model>", "Groq LLM model to use for enrichment", "llama3-70b-8192")
-  .option("--api-key <key>", "Groq API Key (overrides GROQ_API_KEY environment variable)")
+  .option("--provider <provider>", "LLM Provider to use (groq, openai, anthropic)", "groq")
+  .option("--model <model>", "LLM model to use for enrichment")
+  .option("--api-key <key>", "LLM API Key (overrides environment variables)")
   .action(async (options) => {
     try {
-      const pipeline = new SDKifyPipeline();
-      
-      const useAI = options.ai !== false;
-      const groqApiKey = options.apiKey || process.env.GROQ_API_KEY;
+      // 1. Read config file
+      const config = ConfigReader.read(options.config);
 
-      if (useAI && !groqApiKey) {
-        console.warn("[SDKify] Warning: AI enrichment is enabled but no GROQ_API_KEY was found in environment or arguments.");
-        console.warn("[SDKify] Generation will proceed using deterministic fallbacks.");
+      // 2. Merge options (CLI arguments override config file)
+      const specPath = options.spec || config.spec;
+      const outputDir = options.output || config.output;
+      const useAI = (options.ai !== undefined ? options.ai : config.useAI) !== false;
+      const llmProvider = options.provider || config.llmProvider || "groq";
+      const modelName = options.model || config.modelName;
+      const apiKey = options.apiKey || config.apiKey;
+
+      if (!specPath) {
+        throw new Error("Missing spec path. Please provide it via -s/--spec or configure it in sdkify.config.json");
+      }
+      if (!outputDir) {
+        throw new Error("Missing output directory. Please provide it via -o/--output or configure it in sdkify.config.json");
       }
 
+      const pipeline = new SDKifyPipeline();
+
       await pipeline.run({
-        specPath: options.spec,
-        outputDir: options.output,
+        specPath,
+        outputDir,
         useAI,
-        groqApiKey,
-        modelName: options.model,
+        llmProvider,
+        apiKey,
+        modelName,
       });
 
       console.log("\n[SDKify] Success! Your SDK is ready.");
