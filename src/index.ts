@@ -2,6 +2,8 @@ import * as path from "path";
 import { SwaggerSpecValidator } from "./validators/swagger.validator.js";
 import { HeyAPIGenerator } from "./generators/heyapi.generator.js";
 import { NpmPackager } from "./packager/npm.packager.js";
+import { GroqEnricher } from "./enrichers/groq.enricher.js";
+import { ASTPostprocessor } from "./postprocessor/ast.postprocessor.js";
 
 export interface PipelineOptions {
   specPath: string;
@@ -35,6 +37,20 @@ export class SDKifyPipeline {
     console.log(`[SDKify] [2/3] Invoking HeyAPI generator into: ${sdkSrcDir}...`);
     await this.generator.generate(options.specPath, sdkSrcDir);
     console.log(`[SDKify] HeyAPI client generated.`);
+
+    // 2.5 AI Enrichment & Post-processing
+    const useAI = options.useAI !== false;
+    if (useAI) {
+      console.log(`[SDKify] Running AI Enrichment Layer...`);
+      const enricher = new GroqEnricher({
+        apiKey: options.groqApiKey,
+        modelName: options.modelName,
+      });
+      const postprocessor = new ASTPostprocessor(enricher);
+      await postprocessor.process(sdkSrcDir, resolvedSpec);
+    } else {
+      console.log(`[SDKify] AI Enrichment Layer disabled.`);
+    }
 
     // 3. Package npm codebase (package.json, tsconfig.json, index.ts, etc.)
     console.log(`[SDKify] [3/3] Packaging npm module structure in: ${options.outputDir}...`);
