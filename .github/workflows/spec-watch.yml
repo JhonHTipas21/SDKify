@@ -4,24 +4,26 @@ on:
   schedule:
     - cron: '0 6 * * *' # Daily at 06:00 UTC
   workflow_dispatch:
+    inputs:
+      spec_url:
+        description: 'URL of the OpenAPI spec to watch'
+        required: true
+        default: 'https://raw.githubusercontent.com/wompi/docs/main/openapi.yaml'
+      spec_name:
+        description: 'Name of the provider (e.g. wompi)'
+        required: true
+        default: 'wompi'
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: read
 
 jobs:
   check-specs:
     name: Check Specs & Detect Breaking Changes
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        spec:
-          - name: wompi
-            url: https://raw.githubusercontent.com/wompi/docs/main/openapi.yaml
-          - name: clickup
-            url: https://raw.githubusercontent.com/clickup/api-docs/main/openapi.yaml
-      fail-fast: false
+    outputs:
+      changed: ${{ steps.check_changes.outputs.changed }}
+      diff_exit: ${{ steps.semantic_diff.outputs.diff_exit }}
     
     steps:
       - name: Checkout code
@@ -30,24 +32,40 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Download Spec
+      - name: Define Spec Context
+        id: context
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "SPEC_URL=${{ github.event.inputs.spec_url }}" >> $GITHUB_ENV
+            echo "SPEC_NAME=${{ github.event.inputs.spec_name }}" >> $GITHUB_ENV
+          else
+            # Default fallback for scheduled runs
+            echo "SPEC_URL=https://raw.githubusercontent.com/wompi/docs/main/openapi.yaml" >> $GITHUB_ENV
+            echo "SPEC_NAME=wompi" >> $GITHUB_ENV
+          fi
+
+      - name: Download Spec Safely
         id: download_spec
         run: |
           mkdir -p fixtures/specs
-          curl -sL "${{ matrix.spec.url }}" -o fixtures/specs/${{ matrix.spec.name }}.yaml
-          HASH=$(sha256sum fixtures/specs/${{ matrix.spec.name }}.yaml | awk '{ print $1 }')
+          mkdir -p fixtures/snapshots
+          
+          # Use curl with timeouts and size limits
+          curl -sS --max-time 30 --max-filesize 10000000 "$SPEC_URL" -o fixtures/specs/$SPEC_NAME.yaml
+          
+          # Generate hash
+          HASH=$(sha256sum fixtures/specs/$SPEC_NAME.yaml | awk '{ print $1 }')
           echo "CURRENT_HASH=$HASH" >> $GITHUB_ENV
           
-          # Check old hash
           OLD_HASH=""
-          if [ -f fixtures/specs/${{ matrix.spec.name }}.hash ]; then
-            OLD_HASH=$(cat fixtures/specs/${{ matrix.spec.name }}.hash)
+          if [ -f fixtures/snapshots/$SPEC_NAME.hash ]; then
+            OLD_HASH=$(cat fixtures/snapshots/$SPEC_NAME.hash)
           fi
           echo "OLD_HASH=$OLD_HASH" >> $GITHUB_ENV
 
@@ -55,60 +73,130 @@ jobs:
         id: check_changes
         run: |
           if [ "$CURRENT_HASH" == "$OLD_HASH" ]; then
-            echo "No changes detected for ${{ matrix.spec.name }}. Skipping."
+            echo "No changes detected for $SPEC_NAME. Skipping."
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "Changes detected!"
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Run SDKify
+      - name: Detect Semantic Changes
         if: steps.check_changes.outputs.changed == 'true'
+        id: semantic_diff
         run: |
-          npx tsx src/cli/index.ts --spec fixtures/specs/${{ matrix.spec.name }}.yaml --output fixtures/generated-sdks/${{ matrix.spec.name }}-sdk --no-ai
-
-      - name: Detect Breaking Changes (Structural Diff)
-        if: steps.check_changes.outputs.changed == 'true'
-        id: structural_diff
-        run: |
-          # Run custom script to compare AST types
-          npx tsx scripts/detect-breaking.ts \
-            --old fixtures/sdks/${{ matrix.spec.name }}-sdk/src \
-            --new fixtures/generated-sdks/${{ matrix.spec.name }}-sdk/src > diff_report.txt
+          # Fetch the previously saved spec from git if we have an old hash
+          if [ -n "$OLD_HASH" ]; then
+            git fetch origin main
+            git checkout origin/main -- fixtures/specs/$SPEC_NAME.yaml || true
+            mv fixtures/specs/$SPEC_NAME.yaml fixtures/specs/${SPEC_NAME}_old.yaml
+          else
+            # No old spec to compare
+            echo "No old spec to compare. Exiting diff step."
+            echo "diff_exit=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           
-          # detect-breaking.ts will exit with code 1 if it finds breaking changes, code 0 otherwise.
-          # we catch it and set outputs.
+          # Put new spec back in place
+          curl -sS --max-time 30 "$SPEC_URL" -o fixtures/specs/$SPEC_NAME.yaml
+          
+          # Run Semantic Comparison (compare-specs.ts)
+          npx tsx scripts/compare-specs.ts --old fixtures/specs/${SPEC_NAME}_old.yaml --new fixtures/specs/$SPEC_NAME.yaml > diff_report.json || EXIT_CODE=$?
+          
+          echo "diff_exit=${EXIT_CODE:-0}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Save new hash
+      - name: Save new hash (Artifact for next job)
         if: steps.check_changes.outputs.changed == 'true'
         run: |
-          echo "$CURRENT_HASH" > fixtures/specs/${{ matrix.spec.name }}.hash
-          rm -rf fixtures/sdks/${{ matrix.spec.name }}-sdk
-          mv fixtures/generated-sdks/${{ matrix.spec.name }}-sdk fixtures/sdks/${{ matrix.spec.name }}-sdk
+          echo "$CURRENT_HASH" > fixtures/snapshots/$SPEC_NAME.hash
+          mkdir -p artifacts
+          cp diff_report.json artifacts/ || echo '{"breaking": [], "nonBreaking": [], "unknown": []}' > artifacts/diff_report.json
+          cp fixtures/snapshots/$SPEC_NAME.hash artifacts/
+
+      - name: Upload Artifacts
+        if: steps.check_changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-watch-artifacts
+          path: artifacts/
+
+  act-on-changes:
+    name: Act on Changes (Create Issue / PR)
+    needs: check-specs
+    if: needs.check-specs.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: spec-watch-artifacts
+          path: artifacts
+
+      - name: Parse Diff Exit Code and Content
+        id: parse_diff
+        run: |
+          # diff_exit from previous job
+          DIFF_EXIT=${{ needs.check-specs.outputs.diff_exit }}
+          echo "diff_exit=$DIFF_EXIT" >> $GITHUB_OUTPUT
+          
+          # Format JSON report to Markdown if exists
+          if [ -f artifacts/diff_report.json ]; then
+             echo "report_exists=true" >> $GITHUB_OUTPUT
+          else
+             echo "report_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run SDKify for Non-Breaking Updates
+        if: steps.parse_diff.outputs.diff_exit == '2'
+        run: |
+          npm ci
+          # Regenerate SDK without AI
+          npx tsx src/cli/index.ts --spec fixtures/specs/${SPEC_NAME}.yaml --output fixtures/generated-sdks/${SPEC_NAME}-sdk --no-ai
+          
+          # Update hashes
+          cp artifacts/$SPEC_NAME.hash fixtures/snapshots/
+
+      - name: Create Pull Request (Non-Breaking)
+        if: steps.parse_diff.outputs.diff_exit == '2'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: auto-update SDK for ${{ github.event.inputs.spec_name || 'wompi' }}"
+          title: "Update SDK for ${{ github.event.inputs.spec_name || 'wompi' }}"
+          body: "The upstream OpenAPI specification was updated. No breaking changes were found. Please review the regenerated SDK."
+          branch: "update-sdk-${{ github.event.inputs.spec_name || 'wompi' }}"
+          labels: "sdk-update, automated"
 
       - name: Create Breaking Change Issue
-        if: steps.check_changes.outputs.changed == 'true' && steps.structural_diff.outcome == 'failure'
+        if: steps.parse_diff.outputs.diff_exit == '1' && steps.parse_diff.outputs.report_exists == 'true'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const diffReport = fs.readFileSync('diff_report.txt', 'utf8');
+            const report = JSON.parse(fs.readFileSync('artifacts/diff_report.json', 'utf8'));
+            
+            let markdown = `The upstream OpenAPI specification has been updated, and **potential breaking or unknown changes** were detected.\n\n`;
+            
+            if (report.breaking.length > 0) {
+              markdown += `### 🚨 Breaking Changes\n`;
+              report.breaking.forEach(c => markdown += `- **${c.path}**: ${c.message}\n`);
+            }
+            if (report.unknown.length > 0) {
+              markdown += `\n### ⚠️ Unknown Changes (Manual review required)\n`;
+              report.unknown.forEach(c => markdown += `- **${c.path}**: ${c.message}\n`);
+            }
+            
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🚨 Breaking Change Detected in ${{ matrix.spec.name }} API Spec`,
-              body: `The upstream OpenAPI specification for **${{ matrix.spec.name }}** has been updated, and structural breaking changes were detected in the generated SDK:\n\n\`\`\`\n${diffReport}\n\`\`\`\n\nPlease review these changes manually before publishing a new major version.`,
+              title: `🚨 API Specification Change Detected`,
+              body: markdown,
               labels: ['breaking-change']
             });
-
-      - name: Create Pull Request
-        if: steps.check_changes.outputs.changed == 'true' && steps.structural_diff.outcome == 'success'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: auto-update SDK for ${{ matrix.spec.name }}"
-          title: "Update SDK for ${{ matrix.spec.name }}"
-          body: "The upstream OpenAPI specification was updated, but no breaking changes were found. Please review the regenerated SDK."
-          branch: "update-sdk-${{ matrix.spec.name }}"
-          labels: "sdk-update, automated"

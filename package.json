@@ -1,5 +1,5 @@
 {
-  "name": "sdkify",
+  "name": "@jhonhtipas21/sdkify",
   "version": "1.0.0",
   "description": "SDKify — Generador de SDKs desde especificaciones OpenAPI usando IA",
   "main": "dist/index.js",
@@ -9,9 +9,15 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "validate-spec": "node -e \"import('./dist/validators/swagger.validator.js').then(m => new m.SwaggerSpecValidator().validate('tests/fixtures/petstore.yaml').then(() => { console.log('Spec OK'); process.exit(0); }).catch(e => { console.error(e.message); process.exit(1); }));\"",
     "start": "ts-node src/index.ts"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "keywords": [
     "openapi",
