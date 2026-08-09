@@ -1,0 +1,44 @@
+openapi: 3.0.3
+info:
+  title: PetStore
+  description: A sample PetStore API to test SDKify (breaking version)
+  version: 1.0.5
+servers:
+  - url: https://api.petstore.swagger.io/v2
+paths:
+  /pets/{id}:
+    post:
+      summary: Update a pet by ID
+      operationId: updatePetById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '200':
+          description: Pet updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+components:
+  schemas:
+    Pet:
+      type: object
+      required:
+        - name
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        tag:
+          type: string

@@ -1,7 +1,7 @@
 {
   "name": "@jhonhtipas21/sdkify",
   "version": "1.0.0",
-  "description": "SDKify — Generador de SDKs desde especificaciones OpenAPI usando IA",
+  "description": "SDKify — Generates TypeScript SDKs from OpenAPI specifications using AI",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
