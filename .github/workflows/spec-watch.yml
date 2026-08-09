@@ -1,0 +1,114 @@
+name: Spec Watch & Regression Detection
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Daily at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  check-specs:
+    name: Check Specs & Detect Breaking Changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        spec:
+          - name: wompi
+            url: https://raw.githubusercontent.com/wompi/docs/main/openapi.yaml
+          - name: clickup
+            url: https://raw.githubusercontent.com/clickup/api-docs/main/openapi.yaml
+      fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Spec
+        id: download_spec
+        run: |
+          mkdir -p fixtures/specs
+          curl -sL "${{ matrix.spec.url }}" -o fixtures/specs/${{ matrix.spec.name }}.yaml
+          HASH=$(sha256sum fixtures/specs/${{ matrix.spec.name }}.yaml | awk '{ print $1 }')
+          echo "CURRENT_HASH=$HASH" >> $GITHUB_ENV
+          
+          # Check old hash
+          OLD_HASH=""
+          if [ -f fixtures/specs/${{ matrix.spec.name }}.hash ]; then
+            OLD_HASH=$(cat fixtures/specs/${{ matrix.spec.name }}.hash)
+          fi
+          echo "OLD_HASH=$OLD_HASH" >> $GITHUB_ENV
+
+      - name: Check for Spec Changes
+        id: check_changes
+        run: |
+          if [ "$CURRENT_HASH" == "$OLD_HASH" ]; then
+            echo "No changes detected for ${{ matrix.spec.name }}. Skipping."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected!"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run SDKify
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          npx tsx src/cli/index.ts --spec fixtures/specs/${{ matrix.spec.name }}.yaml --output fixtures/generated-sdks/${{ matrix.spec.name }}-sdk --no-ai
+
+      - name: Detect Breaking Changes (Structural Diff)
+        if: steps.check_changes.outputs.changed == 'true'
+        id: structural_diff
+        run: |
+          # Run custom script to compare AST types
+          npx tsx scripts/detect-breaking.ts \
+            --old fixtures/sdks/${{ matrix.spec.name }}-sdk/src \
+            --new fixtures/generated-sdks/${{ matrix.spec.name }}-sdk/src > diff_report.txt
+          
+          # detect-breaking.ts will exit with code 1 if it finds breaking changes, code 0 otherwise.
+          # we catch it and set outputs.
+        continue-on-error: true
+
+      - name: Save new hash
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          echo "$CURRENT_HASH" > fixtures/specs/${{ matrix.spec.name }}.hash
+          rm -rf fixtures/sdks/${{ matrix.spec.name }}-sdk
+          mv fixtures/generated-sdks/${{ matrix.spec.name }}-sdk fixtures/sdks/${{ matrix.spec.name }}-sdk
+
+      - name: Create Breaking Change Issue
+        if: steps.check_changes.outputs.changed == 'true' && steps.structural_diff.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diffReport = fs.readFileSync('diff_report.txt', 'utf8');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Breaking Change Detected in ${{ matrix.spec.name }} API Spec`,
+              body: `The upstream OpenAPI specification for **${{ matrix.spec.name }}** has been updated, and structural breaking changes were detected in the generated SDK:\n\n\`\`\`\n${diffReport}\n\`\`\`\n\nPlease review these changes manually before publishing a new major version.`,
+              labels: ['breaking-change']
+            });
+
+      - name: Create Pull Request
+        if: steps.check_changes.outputs.changed == 'true' && steps.structural_diff.outcome == 'success'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: auto-update SDK for ${{ matrix.spec.name }}"
+          title: "Update SDK for ${{ matrix.spec.name }}"
+          body: "The upstream OpenAPI specification was updated, but no breaking changes were found. Please review the regenerated SDK."
+          branch: "update-sdk-${{ matrix.spec.name }}"
+          labels: "sdk-update, automated"
