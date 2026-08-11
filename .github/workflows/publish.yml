@@ -32,6 +32,9 @@ jobs:
         run: npm audit --audit-level=moderate
         continue-on-error: true # Warning only for now
 
+      - name: Build project
+        run: npm run build
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -50,9 +53,6 @@ jobs:
             echo "::error::Unwanted files (secrets or raw fixtures) detected in npm pack output!"
             exit 1
           fi
-
-      - name: Build project
-        run: npm run build
 
   publish:
     name: Semantic Release Publish
